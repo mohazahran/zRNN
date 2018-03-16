@@ -57,7 +57,7 @@ class zLSTM(object):
             xt[inputSeq[t]] = 1.0
             
             zt_ = np.dot(self.Wz, xt) + np.dot(self.Rz, H[t-1]) + self.bz
-            zt = sigmoid(zt_)
+            zt = np.tanh(zt_)
             Z[t] = zt
             
             it_ = np.dot(self.Wi, xt) + np.dot(self.Ri, H[t-1]) + self.bi
@@ -157,12 +157,13 @@ class zLSTM(object):
                 dC[t] += dH[t] * O[t] * (1. - np.tanh(C[t])**2)
                 if(t+1 < T):
                     dC[t] += dC[t+1] * F[t+1]
-                    
-                dF[t] += dC[t] * C[t-1] * F[t] * (1. - F[t])
+                
+                if(t-1 >= 0):  
+                    dF[t] += dC[t] * C[t-1] * F[t] * (1. - F[t])
                 
                 dI[t] += dC[t] * Z[t] * I[t] * (1. - I[t])
                 
-                dZ[t] += dC[t] * I[t] * Z[t] * (1. - Z[t])
+                dZ[t] += dC[t] * I[t] * (1. - (Z[t])**2)
                 
                 dWz += np.outer(dZ[t], X[t])
                 dWi += np.outer(dI[t], X[t])
@@ -214,20 +215,20 @@ class zLSTM(object):
         dbo[dbo < -gradientLimit] = -gradientLimit
         '''
                 
-        self.Wz = self.Wz - self.learningRate * dWz/float(len(inputBatch))
-        self.Wi = self.Wi - self.learningRate * dWi/float(len(inputBatch))
-        self.Wf = self.Wf - self.learningRate * dWf/float(len(inputBatch))
-        self.Wo = self.Wo - self.learningRate * dWo/float(len(inputBatch))
+        self.Wz = self.Wz - self.learningRate * dWz
+        self.Wi = self.Wi - self.learningRate * dWi
+        self.Wf = self.Wf - self.learningRate * dWf
+        self.Wo = self.Wo - self.learningRate * dWo
         
-        self.Rz = self.Rz - self.learningRate * dRz/float(len(inputBatch))
-        self.Ri = self.Ri - self.learningRate * dRi/float(len(inputBatch))
-        self.Rf = self.Rf - self.learningRate * dRf/float(len(inputBatch))
-        self.Ro = self.Ro - self.learningRate * dRo/float(len(inputBatch))
+        self.Rz = self.Rz - self.learningRate * dRz
+        self.Ri = self.Ri - self.learningRate * dRi
+        self.Rf = self.Rf - self.learningRate * dRf
+        self.Ro = self.Ro - self.learningRate * dRo
         
-        self.bz = self.bz - self.learningRate * dbz/float(len(inputBatch))
-        self.bi = self.bi - self.learningRate * dbi/float(len(inputBatch))
-        self.bf = self.bf - self.learningRate * dbf/float(len(inputBatch))
-        self.bo = self.bo - self.learningRate * dbo/float(len(inputBatch))
+        self.bz = self.bz - self.learningRate * dbz
+        self.bi = self.bi - self.learningRate * dbi
+        self.bf = self.bf - self.learningRate * dbf
+        self.bo = self.bo - self.learningRate * dbo
         
     
 
@@ -302,6 +303,8 @@ def main():
     valQuota = 0.2
     
     X_all, Y_all = preProcessing(D)
+    X_all = X_all[:1000]
+    Y_all = Y_all[:1000]
     valSize = int(valQuota * len(X_all))
     X_val = X_all[:valSize]
     Y_val = Y_all[:valSize]
@@ -309,23 +312,23 @@ def main():
     Y_train = Y_all[valSize:]
     lstm = zLSTM(D, H)
     lr = 0.5
+    
+    crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
+    print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
+        
+    crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
+    print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
     for i in range(epochs):
         print 'Epoch#',i
-        
-        crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
-        print 'Cross Entropy TRAIN Loss before= ', crossEntropyLoss
-        
-        crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
-        print 'Cross Entropy VAL Loss before= ', crossEntropyLoss
         
         #lstm.train(X_train, Y_train, batchSize=10, learningRate=lr/float(i+1))
         lstm.train(X_train, Y_train, batchSize=10, learningRate=lr)
         
         crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
-        print 'Cross Entropy TRAIN Loss after=  ', crossEntropyLoss
+        print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
         
         crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
-        print 'Cross Entropy VAL Loss after=  ', crossEntropyLoss
+        print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
         
         '''
         lstm.Wz = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
