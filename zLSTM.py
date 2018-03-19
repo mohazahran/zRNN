@@ -134,7 +134,7 @@ class zLSTM(object):
         
         for b in range(len(inputBatch)): #for each input sentence in the batch
             X = inputBatch[b]
-            Y = np.zeros(self.inputDim)
+            #Y = np.zeros(self.inputDim)
             inputCount = len(X)
             softmaxPredictions, H, O, C, F, I, Z = self.forwardPass(X)
             T = len(H)
@@ -147,6 +147,7 @@ class zLSTM(object):
             dZ = np.zeros((inputCount, self.hiddenDim))
             
             for t in range(T-1,-1,-1): #from T down to 0
+                Y = np.zeros(self.inputDim)
                 Y[trueOutputBatch[b][t]] = 1.0
                 dH[t] += softmaxPredictions[t] - Y
                 if(t+1 < T):
@@ -214,7 +215,8 @@ class zLSTM(object):
         dbo[dbo > gradientLimit] = gradientLimit
         dbo[dbo < -gradientLimit] = -gradientLimit
         '''
-                
+        
+        #do SGD update
         self.Wz = self.Wz - self.learningRate * dWz
         self.Wi = self.Wi - self.learningRate * dWi
         self.Wf = self.Wf - self.learningRate * dWf
