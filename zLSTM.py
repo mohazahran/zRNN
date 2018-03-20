@@ -8,10 +8,12 @@ import nltk
 import csv
 import itertools
 import math
-from random import shuffle
+import random
+from scipy import special
 
 def sigmoid(x):
-    return 1. / (1. + np.exp(-x))
+    #return 1. / (1. + np.exp(-x))
+    return special.expit(x)
 
 class zLSTM(object):
     '''
@@ -331,6 +333,10 @@ def main():
         
         crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
         print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
+        
+        combined = list(zip(X_train, Y_train))
+        random.shuffle(combined)
+        X_train[:], Y_train[:] = zip(*combined)
         
         '''
         lstm.Wz = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
