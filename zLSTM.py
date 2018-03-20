@@ -119,6 +119,7 @@ class zLSTM(object):
     
     
     def backProp(self, inputBatch, trueOutputBatch):
+        deltas = {}
         dWz = np.zeros(self.Wz.shape)
         dWi = np.zeros(self.Wi.shape)
         dWf = np.zeros(self.Wf.shape)
@@ -217,7 +218,11 @@ class zLSTM(object):
         dbo[dbo > gradientLimit] = gradientLimit
         dbo[dbo < -gradientLimit] = -gradientLimit
         '''
-        
+        deltas['Wz'] = dWz; deltas['Wi'] = dWi; deltas['Wf'] = dWf; deltas['Wo'] = dWo
+        deltas['Rz'] = dRz; deltas['Ri'] = dRi; deltas['Rf'] = dRf; deltas['Ro'] = dRo
+        deltas['bz'] = dbz; deltas['bi'] = dbi; deltas['bf'] = dbf; deltas['bo'] = dbo
+        return deltas
+        '''
         #do SGD update
         self.Wz = self.Wz - self.learningRate * dWz
         self.Wi = self.Wi - self.learningRate * dWi
@@ -233,7 +238,24 @@ class zLSTM(object):
         self.bi = self.bi - self.learningRate * dbi
         self.bf = self.bf - self.learningRate * dbf
         self.bo = self.bo - self.learningRate * dbo
+        '''
+    
+    def SGD(self, deltas):
+        #do SGD update
+        self.Wz = self.Wz - self.learningRate * deltas['Wz']
+        self.Wi = self.Wi - self.learningRate * deltas['Wi']
+        self.Wf = self.Wf - self.learningRate * deltas['Wf']
+        self.Wo = self.Wo - self.learningRate * deltas['Wo']
         
+        self.Rz = self.Rz - self.learningRate * deltas['Rz']
+        self.Ri = self.Ri - self.learningRate * deltas['Ri']
+        self.Rf = self.Rf - self.learningRate * deltas['Rf']
+        self.Ro = self.Ro - self.learningRate * deltas['Ro']
+        
+        self.bz = self.bz - self.learningRate * deltas['bz']
+        self.bi = self.bi - self.learningRate * deltas['bi']
+        self.bf = self.bf - self.learningRate * deltas['bf']
+        self.bo = self.bo - self.learningRate * deltas['bo']
     
 
     def stable_softmax(self, X):
@@ -250,7 +272,9 @@ class zLSTM(object):
         for b in range(batchCount):
             X_batch = trainingSet[b*batchSize : (b+1)*batchSize]
             Y_batch = trainingTruth[b*batchSize : (b+1)*batchSize]
-            self.backProp(X_batch, Y_batch)
+            
+            deltas = self.backProp(X_batch, Y_batch)
+            self.SGD(deltas)
             
     
     
@@ -334,27 +358,11 @@ def main():
         crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
         print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
         
+        #shuffle the training set for every epoch
         combined = list(zip(X_train, Y_train))
         random.shuffle(combined)
         X_train[:], Y_train[:] = zip(*combined)
-        
-        '''
-        lstm.Wz = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        lstm.Wi = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        lstm.Wf = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        lstm.Wo = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        
-        lstm.Rz = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        lstm.Ri = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        lstm.Rf = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        lstm.Ro = np.random.uniform(-0.1, 0.1, (lstm.hiddenDim, lstm.inputDim))
-        
-        lstm.bz = np.random.uniform(-0.1, 0.1, (1,lstm.hiddenDim))
-        lstm.bi = np.random.uniform(-0.1, 0.1, (1,lstm.hiddenDim))
-        lstm.bf = np.ones((1,lstm.hiddenDim))
-        #self.bf = np.random.uniform(-0.1, 0.1, (1,hiddenDim)) #better to be initialized to all ones.
-        lstm.bo = np.random.uniform(-0.1, 0.1, (1,lstm.hiddenDim))
-        '''
+    
 
 if __name__ == '__main__':
     main()
