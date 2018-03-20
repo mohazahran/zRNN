@@ -10,6 +10,7 @@ import itertools
 import math
 import random
 from scipy import special
+import pickle as pkl
 
 def sigmoid(x):
     #return 1. / (1. + np.exp(-x))
@@ -85,6 +86,27 @@ class zLSTM(object):
         
         return softmaxPredictions, H, O, C, F, I, Z
     
+    def generate(self, xt, ht_1, ct_1):
+        zt_ = np.dot(self.Wz, xt) + np.dot(self.Rz, ht_1) + self.bz
+        zt = np.tanh(zt_)
+        
+        it_ = np.dot(self.Wi, xt) + np.dot(self.Ri, ht_1) + self.bi
+        it = sigmoid(it_)
+        
+        ot_ = np.dot(self.Wo, xt) + np.dot(self.Ro, ht_1) + self.bo
+        ot = sigmoid(ot_)
+        
+        ft_ = np.dot(self.Wf, xt) + np.dot(self.Rf, ht_1) + self.bf
+        ft = sigmoid(ft_)        
+        
+        ct = zt * it + ct_1 * ft
+        
+        ht = np.tanh(ct) * ot
+        
+        softmaxPredictions = self.stable_softmax(ht)
+        
+        return softmaxPredictions, ht, ct
+    
     def calculate_loss_batch(self, inputBatch, trueOutputBatch):
         loss = 0.0
         for i in range(len(inputBatch)):
@@ -114,9 +136,7 @@ class zLSTM(object):
             L -= np.log(softmaxPredictions[t][trueOutputSeq[t]])
         
         return L
-        
-        
-    
+
     
     def backProp(self, inputBatch, trueOutputBatch):
         deltas = {}
@@ -189,6 +209,14 @@ class zLSTM(object):
         #print 'dweight ',np.linalg.norm(dWz), np.linalg.norm(dWi), np.linalg.norm(dWf), np.linalg.norm(dWo)
         
         #gradient clipping
+  
+        deltas['Wz'] = dWz; deltas['Wi'] = dWi; deltas['Wf'] = dWf; deltas['Wo'] = dWo
+        deltas['Rz'] = dRz; deltas['Ri'] = dRi; deltas['Rf'] = dRf; deltas['Ro'] = dRo
+        deltas['bz'] = dbz; deltas['bi'] = dbi; deltas['bf'] = dbf; deltas['bo'] = dbo
+        return deltas
+   
+    
+    def SGD(self, deltas):
         '''
         gradientLimit = 5.
         dWz[dWz > gradientLimit] = gradientLimit
@@ -218,29 +246,6 @@ class zLSTM(object):
         dbo[dbo > gradientLimit] = gradientLimit
         dbo[dbo < -gradientLimit] = -gradientLimit
         '''
-        deltas['Wz'] = dWz; deltas['Wi'] = dWi; deltas['Wf'] = dWf; deltas['Wo'] = dWo
-        deltas['Rz'] = dRz; deltas['Ri'] = dRi; deltas['Rf'] = dRf; deltas['Ro'] = dRo
-        deltas['bz'] = dbz; deltas['bi'] = dbi; deltas['bf'] = dbf; deltas['bo'] = dbo
-        return deltas
-        '''
-        #do SGD update
-        self.Wz = self.Wz - self.learningRate * dWz
-        self.Wi = self.Wi - self.learningRate * dWi
-        self.Wf = self.Wf - self.learningRate * dWf
-        self.Wo = self.Wo - self.learningRate * dWo
-        
-        self.Rz = self.Rz - self.learningRate * dRz
-        self.Ri = self.Ri - self.learningRate * dRi
-        self.Rf = self.Rf - self.learningRate * dRf
-        self.Ro = self.Ro - self.learningRate * dRo
-        
-        self.bz = self.bz - self.learningRate * dbz
-        self.bi = self.bi - self.learningRate * dbi
-        self.bf = self.bf - self.learningRate * dbf
-        self.bo = self.bo - self.learningRate * dbo
-        '''
-    
-    def SGD(self, deltas):
         #do SGD update
         self.Wz = self.Wz - self.learningRate * deltas['Wz']
         self.Wi = self.Wi - self.learningRate * deltas['Wi']
@@ -265,6 +270,7 @@ class zLSTM(object):
     
         #exps = np.exp(X)
         #return exps / np.sum(exps)
+
 
     def train(self, trainingSet = [], trainingTruth = [], batchSize = 10, learningRate = 0.5):
         self.learningRate = learningRate
@@ -313,7 +319,9 @@ def preProcessing(vocabSize):
      
     # Replace all words not in our vocabulary with the unknown token
     for i, sent in enumerate(tokenized_sentences):
-        tokenized_sentences[i] = [w if w in word_to_index else unknown_token for w in sent]
+        #tokenized_sentences[i] = [w if w in word_to_index else unknown_token for w in sent]
+        #dropout all unknown words
+        tokenized_sentences[i] = [w for w in sent if w in word_to_index]
      
     print "\nExample sentence: '%s'" % sentences[0]
     print "\nExample sentence after Pre-processing: '%s'" % tokenized_sentences[0]
@@ -321,16 +329,38 @@ def preProcessing(vocabSize):
     # Create the training data
     X_train = np.asarray([[word_to_index[w] for w in sent[:-1]] for sent in tokenized_sentences])
     Y_train = np.asarray([[word_to_index[w] for w in sent[1:]] for sent in tokenized_sentences])
-    return X_train, Y_train
+    return X_train, Y_train, word_to_index, index_to_word
+
+def generateText(lstm, w2i, i2w, startWordSeed, wordCount):
+    if startWordSeed not in w2i:
+        print 'Word is not in vocab, try different word!'
+        return
+    sent = ''
+    genWord = startWordSeed
+    ht_1 = np.zeros(lstm.hiddenDim)
+    ct_1 = np.zeros(lstm.hiddenDim)
+    while wordCount >0:
+        xt = np.zeros(lstm.inputDim)
+        xt[w2i[genWord]] = 1.0
+        softmaxPredictions, ht, ct = lstm.generate(xt, ht_1, ct_1)
+        genWordId = softmaxPredictions[0].argmax()
+        genWord = i2w[genWordId]
+        sent += genWord + ' '
+        ht_1 = ht.T
+        ct_1 = ct.T
+        wordCount -= 1
+    return sent
+    
+    
 
 def main():
     np.random.seed(100)
-    D = 50 # Number of input dimension == number of items in vocabulary
+    D = 1000 # Number of input dimension == number of items in vocabulary
     H = D # Number of LSTM layer's neurons
-    epochs = 50
+    epochs = 10
     valQuota = 0.2
     
-    X_all, Y_all = preProcessing(D)
+    X_all, Y_all, w2i, i2w = preProcessing(D)
     X_all = X_all[:1000]
     Y_all = Y_all[:1000]
     valSize = int(valQuota * len(X_all))
@@ -362,7 +392,21 @@ def main():
         combined = list(zip(X_train, Y_train))
         random.shuffle(combined)
         X_train[:], Y_train[:] = zip(*combined)
+        
+    pkl.dump([lstm,w2i,i2w], open('lstm.pkl', 'wb'))
+    print 'Training is finished, model is saved to lstm.pkl'
+    
+    
     
 
 if __name__ == '__main__':
+    '''
+    lst = pkl.load(open('lstm.pkl', 'rb'))
+    lstm = lst[0]
+    w2i = lst[1]
+    i2w = lst[2]
+    sent = generateText(lstm, w2i, i2w, 'SENTENCE_START', 50)
+    print sent
+    '''
+    
     main()
