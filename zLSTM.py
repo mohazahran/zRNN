@@ -11,6 +11,7 @@ import math
 import random
 from scipy import special
 import pickle as pkl
+import re
 
 def sigmoid(x):
     #return 1. / (1. + np.exp(-x))
@@ -284,6 +285,55 @@ class zLSTM(object):
             
     
     
+def clean_Data(myData):
+    cleanedData = []   
+    p1 = re.compile("\w+-\w+")   
+    p2 = re.compile("\W\d+[A-Za-z]+")
+    p3 = re.compile("[A-Za-z]+\d+\W")
+    p4 = re.compile("[^A-Za-z0-9\s']") #remove special chars
+    p5 = re.compile("[^A-Za-z](\d+\s*)+") #consectutive NUMs
+    for line in myData:    
+        line = line.strip()    
+        matches = p1.findall(line)
+        for m in matches:
+            line = line.replace(m, m.replace('-',''))
+        matches = p2.findall(line)
+        for m in matches:
+            id = 1
+            for c in m:
+                if c.isdigit():
+                    id +=1
+                elif(id != 1):
+                    break
+            s = m[:id] + ' ' + m[id:].strip()
+            line = line.replace(m, s)
+        
+        matches = p3.findall(line)
+        for m in matches:
+            id = 0
+            for c in m:
+                if c.isdigit():
+                    break
+                else:
+                    id +=1
+            s = m[:id] + ' ' + m[id:].strip()
+            line = line.replace(m, s)
+        
+        matches = p4.findall(line)
+        for m in matches:
+            line = line.replace(m, m.replace(m,' '))
+            
+        matches = p5.findall(line)
+        for m in matches:
+            line = line.replace(m, ' num ')
+            
+                
+            
+        cleaned = ' '.join(line.split())          
+        cleaned = cleaned.lower()
+        cleaned = cleaned.strip()
+        cleanedData.append(cleaned)        
+    return cleanedData
 
 def preProcessing(vocabSize):
     vocabulary_size = vocabSize
@@ -292,17 +342,20 @@ def preProcessing(vocabSize):
     sentence_end_token = "SENTENCE_END"
     # Read the data and append SENTENCE_START and SENTENCE_END tokens
     print "Reading CSV file..."
-    with open('redditText', 'rb') as f:
+    with open('wikitext-2/wiki.train.tokens', 'rb') as f:
         reader = csv.reader(f, skipinitialspace=True)
         reader.next()
         # Split full comments into sentences
         sentences = itertools.chain(*[nltk.sent_tokenize(x[0].decode('utf-8').lower()) for x in reader])
+        sentences = clean_Data(sentences)
         # Append SENTENCE_START and SENTENCE_END
         sentences = ["%s %s %s" % (sentence_start_token, x, sentence_end_token) for x in sentences]
     print "Parsed %d sentences." % (len(sentences))
          
     # Tokenize the sentences into words
     tokenized_sentences = [nltk.word_tokenize(sent) for sent in sentences]
+    
+    
      
     # Count the word frequencies
     word_freq = nltk.FreqDist(itertools.chain(*tokenized_sentences))
@@ -355,14 +408,14 @@ def generateText(lstm, w2i, i2w, startWordSeed, wordCount):
 
 def main():
     np.random.seed(100)
-    D = 1000 # Number of input dimension == number of items in vocabulary
+    D = 500 # Number of input dimension == number of items in vocabulary
     H = D # Number of LSTM layer's neurons
-    epochs = 10
+    epochs = 30
     valQuota = 0.2
     
     X_all, Y_all, w2i, i2w = preProcessing(D)
-    X_all = X_all[:1000]
-    Y_all = Y_all[:1000]
+    X_all = X_all[:20000]
+    Y_all = Y_all[:20000]
     valSize = int(valQuota * len(X_all))
     X_val = X_all[:valSize]
     Y_val = Y_all[:valSize]
@@ -397,16 +450,16 @@ def main():
     print 'Training is finished, model is saved to lstm.pkl'
     
     
-    
 
-if __name__ == '__main__':
-    '''
+def simulateData():
     lst = pkl.load(open('lstm.pkl', 'rb'))
     lstm = lst[0]
     w2i = lst[1]
     i2w = lst[2]
-    sent = generateText(lstm, w2i, i2w, 'SENTENCE_START', 50)
+    sent = generateText(lstm, w2i, i2w, 'player', 50)
     print sent
-    '''
     
+
+if __name__ == '__main__':
+    #simulateData()
     main()
