@@ -195,11 +195,18 @@ class zLSTM(object):
                 dWf += np.outer(dF[t], X[t])
                 dWo += np.outer(dO[t], X[t])
                 
+                '''
                 if(t+1 < T):
                     dRz += np.outer(dZ[t+1], H[t])
                     dRi += np.outer(dI[t+1], H[t])
                     dRf += np.outer(dF[t+1], H[t])
                     dRo += np.outer(dO[t+1], H[t])
+                '''
+                if(t-1 >= 0):
+                    dRz += np.outer(dZ[t], H[t-1])
+                    dRi += np.outer(dI[t], H[t-1])
+                    dRf += np.outer(dF[t], H[t-1])
+                    dRo += np.outer(dO[t], H[t-1])
                 
                 dbz += dZ[t]
                 dbi += dI[t]
@@ -332,8 +339,41 @@ def clean_Data(myData):
         cleaned = ' '.join(line.split())          
         cleaned = cleaned.lower()
         cleaned = cleaned.strip()
+        if len(cleaned) <= 1:
+            continue
         cleanedData.append(cleaned)        
     return cleanedData
+
+
+def preProcessing_charBased():
+    unknown_token = "UNKNOWN_TOKEN"
+    start_char = " "
+    end_char = " "
+    # Read the data and append SENTENCE_START and SENTENCE_END tokens
+    print "Reading CSV file..."
+    f = open('wikitext-2-raw/wiki.train.raw', 'r') 
+    sentences = clean_Data(f.readlines())
+    for i,line in enumerate(sentences):
+        
+        sentences[i] = start_char + sentences[i] + end_char
+    
+    i2c = {}
+    c2i = {}
+    id = 0
+    for l in sentences:
+        for c in l:
+            if c not in c2i:
+                c2i[c] = id
+                i2c[id] = c
+                id += 1 
+     
+     
+    print "Using vocabulary size %d." % len(c2i)
+     
+    # Create the training data
+    X_train = np.asarray([[c2i[w] for w in sent[:-1]] for sent in sentences])
+    Y_train = np.asarray([[c2i[w] for w in sent[1:]] for sent in sentences])
+    return X_train, Y_train, c2i, i2c
 
 def preProcessing(vocabSize):
     vocabulary_size = vocabSize
@@ -342,7 +382,7 @@ def preProcessing(vocabSize):
     sentence_end_token = "SENTENCE_END"
     # Read the data and append SENTENCE_START and SENTENCE_END tokens
     print "Reading CSV file..."
-    with open('wikitext-2/wiki.train.tokens', 'rb') as f:
+    with open('wikitext-2-raw/wiki.train.tokens', 'rb') as f:
         reader = csv.reader(f, skipinitialspace=True)
         reader.next()
         # Split full comments into sentences
@@ -408,14 +448,14 @@ def generateText(lstm, w2i, i2w, startWordSeed, wordCount):
 
 def main():
     np.random.seed(100)
-    D = 500 # Number of input dimension == number of items in vocabulary
+    D = 38 # Number of input dimension == number of items in vocabulary
     H = D # Number of LSTM layer's neurons
     epochs = 30
     valQuota = 0.2
     
-    X_all, Y_all, w2i, i2w = preProcessing(D)
-    X_all = X_all[:20000]
-    Y_all = Y_all[:20000]
+    X_all, Y_all, w2i, i2w = preProcessing_charBased()
+    X_all = X_all[:1000]
+    Y_all = Y_all[:1000]
     valSize = int(valQuota * len(X_all))
     X_val = X_all[:valSize]
     Y_val = Y_all[:valSize]
@@ -423,6 +463,8 @@ def main():
     Y_train = Y_all[valSize:]
     lstm = zLSTM(D, H)
     lr = 0.5
+    
+    print 'Starting training'
     
     crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
     print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
