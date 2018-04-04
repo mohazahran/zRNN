@@ -21,11 +21,14 @@ class zLSTM(object):
     '''
     classdocs
     '''
-    
-
-    def __init__(self, inputDim, hiddenDim):
+    def __init__(self, inputDim=10, hiddenDim=10, learningRate = 0.01, clipGradients = True, useAdaGrad = True, batchSize = 10):
         self.inputDim = inputDim
         self.hiddenDim = hiddenDim
+        self.learningRate = learningRate
+        self.clipGradients = clipGradients
+        self.useAdaGrad = useAdaGrad
+        self.batchSize = batchSize
+        
         #self.Wz = np.random.uniform(-np.sqrt(1./inputDim), np.sqrt(1./inputDim), (hiddenDim, inputDim))
         self.Wz = np.random.uniform(-0.1, 0.1, (hiddenDim, inputDim))
         self.Wi = np.random.uniform(-0.1, 0.1, (hiddenDim, inputDim))
@@ -39,14 +42,24 @@ class zLSTM(object):
         
         self.bz = np.random.uniform(-0.1, 0.1, (1,hiddenDim))
         self.bi = np.random.uniform(-0.1, 0.1, (1,hiddenDim))
-        self.bf = np.ones((1,hiddenDim))
-        #self.bf = np.random.uniform(-0.1, 0.1, (1,hiddenDim)) #better to be initialized to all ones.
+        #self.bf = np.ones((1,hiddenDim))
+        self.bf = np.random.uniform(-0.1, 0.1, (1,hiddenDim)) #better to be initialized to all ones.
         self.bo = np.random.uniform(-0.1, 0.1, (1,hiddenDim))
+        
+        #memory for gradients for adagrad
+        mdWz = np.zeros(self.Wz.shape) ; mdWi = np.zeros(self.Wi.shape); mdWf = np.zeros(self.Wf.shape); mdWo = np.zeros(self.Wo.shape)
+        mdRz = np.zeros(self.Rz.shape); mdRi = np.zeros(self.Ri.shape); mdRf = np.zeros(self.Rf.shape); mdRo = np.zeros(self.Ro.shape)
+        mdbz = np.zeros(self.bz.shape); mdbi = np.zeros(self.bi.shape); mdbf = np.zeros(self.bf.shape); mdbo = np.zeros(self.bo.shape)
+        
+        self.memory={}
+        self.memory['dWz'] = mdWz; self.memory['dWi'] = mdWi; self.memory['dWf'] = mdWf; self.memory['dWo'] = mdWo
+        self.memory['dRz'] = mdRz; self.memory['dRi'] = mdRi; self.memory['dRf'] = mdRf; self.memory['dRo'] = mdRo
+        self.memory['dbz'] = mdbz; self.memory['dbi'] = mdbi; self.memory['dbf'] = mdbf; self.memory['dbo'] = mdbo;    
         
     def forwardPass(self, inputSeq): #inputSeq is a sequence of input vectors (e.g. an input sentence)
         inputCount = len(inputSeq) #e.g. number of words in a sentence
         
-        # The outputs at each time step. Again, we save them for later.
+        # The outputs at each time step.
         H = np.zeros((inputCount, self.hiddenDim))
         O = np.zeros((inputCount, self.hiddenDim))
         C = np.zeros((inputCount, self.hiddenDim))
@@ -62,28 +75,28 @@ class zLSTM(object):
             
             zt_ = np.dot(self.Wz, xt) + np.dot(self.Rz, H[t-1]) + self.bz
             zt = np.tanh(zt_)
-            Z[t] = zt
+            Z[t] = np.copy(zt)
             
             it_ = np.dot(self.Wi, xt) + np.dot(self.Ri, H[t-1]) + self.bi
             it = sigmoid(it_)
-            I[t] = it
+            I[t] = np.copy(it)
             
             ot_ = np.dot(self.Wo, xt) + np.dot(self.Ro, H[t-1]) + self.bo
             ot = sigmoid(ot_)
-            O[t] = ot
+            O[t] = np.copy(ot)
             
             ft_ = np.dot(self.Wf, xt) + np.dot(self.Rf, H[t-1]) + self.bf
             ft = sigmoid(ft_)
-            F[t] = ft
+            F[t] = np.copy(ft)
             
             
             ct = zt * it + C[t-1] * ft
-            C[t] = ct
+            C[t] = np.copy(ct)
             
             ht = np.tanh(ct) * ot
             
-            H[t] = ht # save the current output at time t
-            softmaxPredictions[t] = self.stable_softmax(ht)
+            H[t] = np.copy(ht) 
+            softmaxPredictions[t] = np.copy(self.stable_softmax(ht))
         
         return softmaxPredictions, H, O, C, F, I, Z
     
@@ -106,7 +119,7 @@ class zLSTM(object):
         
         softmaxPredictions = self.stable_softmax(ht)
         
-        return softmaxPredictions, ht, ct
+        return softmaxPredictions, ht[0], ct[0]
     
     def calculate_loss_batch(self, inputBatch, trueOutputBatch):
         loss = 0.0
@@ -114,8 +127,7 @@ class zLSTM(object):
             loss += self.calculate_loss(inputBatch[i], trueOutputBatch[i])
             
         return loss / len(inputBatch)
-            
-            
+                    
     def calculate_loss(self, inputSeq, trueOutputSeq):
         '''
         L = 0
@@ -158,10 +170,11 @@ class zLSTM(object):
         
         for b in range(len(inputBatch)): #for each input sentence in the batch
             X = inputBatch[b]
-            #Y = np.zeros(self.inputDim)
+            
             inputCount = len(X)
             softmaxPredictions, H, O, C, F, I, Z = self.forwardPass(X)
-            T = len(H)
+            
+            T = len(X)
             
             dH = np.zeros((inputCount, self.hiddenDim))
             dO = np.zeros((inputCount, self.hiddenDim))
@@ -170,44 +183,49 @@ class zLSTM(object):
             dI = np.zeros((inputCount, self.hiddenDim))
             dZ = np.zeros((inputCount, self.hiddenDim))
             
-            for t in range(T-1,-1,-1): #from T down to 0
+            for t in reversed(range(T)): #from idx T-1 down to 0
+                xt = np.zeros((self.inputDim))
+                xt[X[t]] = 1.0
                 Y = np.zeros(self.inputDim)
                 Y[trueOutputBatch[b][t]] = 1.0
                 dH[t] += softmaxPredictions[t] - Y
                 if(t+1 < T):
                     dH[t] += np.dot(self.Rz, dZ[t+1]) + np.dot(self.Ri, dI[t+1]) + np.dot(self.Rf, dF[t+1]) + np.dot(self.Ro, dO[t+1])
                 
-                dO[t] += dH[t] * np.tanh(C[t]) * O[t] * (1. - O[t])
+                dO[t] += dH[t] * np.tanh(C[t]) * O[t] * (1 - O[t]) 
                 
-                dC[t] += dH[t] * O[t] * (1. - np.tanh(C[t])**2)
+                dC[t] += dH[t] * O[t] * (1 - np.tanh(C[t]) * np.tanh(C[t]))
                 if(t+1 < T):
                     dC[t] += dC[t+1] * F[t+1]
                 
                 if(t-1 >= 0):  
-                    dF[t] += dC[t] * C[t-1] * F[t] * (1. - F[t])
+                    dF[t] += dC[t] * C[t-1] * F[t] * (1 - F[t])
                 
-                dI[t] += dC[t] * Z[t] * I[t] * (1. - I[t])
+                dI[t] += dC[t] * Z[t] * I[t] * (1 - I[t])
                 
-                dZ[t] += dC[t] * I[t] * (1. - (Z[t])**2)
+                dZ[t] += dC[t] * I[t] * (1 - Z[t]*Z[t])
                 
-                dWz += np.outer(dZ[t], X[t])
-                dWi += np.outer(dI[t], X[t])
-                dWf += np.outer(dF[t], X[t])
-                dWo += np.outer(dO[t], X[t])
+                dWz += np.outer(dZ[t], xt)
+                dWi += np.outer(dI[t], xt)
+                dWf += np.outer(dF[t], xt)
+                dWo += np.outer(dO[t], xt)
                 
-                '''
+                
                 if(t+1 < T):
                     dRz += np.outer(dZ[t+1], H[t])
                     dRi += np.outer(dI[t+1], H[t])
                     dRf += np.outer(dF[t+1], H[t])
                     dRo += np.outer(dO[t+1], H[t])
+                
+                
+                
                 '''
                 if(t-1 >= 0):
                     dRz += np.outer(dZ[t], H[t-1])
                     dRi += np.outer(dI[t], H[t-1])
                     dRf += np.outer(dF[t], H[t-1])
                     dRo += np.outer(dO[t], H[t-1])
-                
+                '''
                 dbz += dZ[t]
                 dbi += dI[t]
                 dbf += dF[t]
@@ -225,67 +243,62 @@ class zLSTM(object):
    
     
     def SGD(self, deltas):
-        '''
-        gradientLimit = 5.
-        dWz[dWz > gradientLimit] = gradientLimit
-        dWz[dWz < -gradientLimit] = -gradientLimit
-        dWi[dWi > gradientLimit] = gradientLimit
-        dWi[dWi < -gradientLimit] = -gradientLimit
-        dWf[dWf > gradientLimit] = gradientLimit
-        dWf[dWf < -gradientLimit] = -gradientLimit
-        dWo[dWo > gradientLimit] = gradientLimit
-        dWo[dWo < -gradientLimit] = -gradientLimit
+        #clip gradients
+        for d in deltas:
+            if self.clipGradients:
+                np.clip(deltas[d], -5, 5, out=deltas[d]) # clip to overcome exploding gradients
+            if self.useAdaGrad:
+                self.memory['d'+d] += deltas[d] * deltas[d] # updating memory
         
-        dRz[dRz > gradientLimit] = gradientLimit
-        dRz[dRz < -gradientLimit] = -gradientLimit
-        dRi[dRi > gradientLimit] = gradientLimit
-        dRi[dRi < -gradientLimit] = -gradientLimit
-        dRf[dRf > gradientLimit] = gradientLimit
-        dRf[dRf < -gradientLimit] = -gradientLimit
-        dRo[dRo > gradientLimit] = gradientLimit
-        dRo[dRo < -gradientLimit] = -gradientLimit
         
-        dbz[dbz > gradientLimit] = gradientLimit
-        dbz[dbz < -gradientLimit] = -gradientLimit
-        dbi[dbi > gradientLimit] = gradientLimit
-        dbi[dbi < -gradientLimit] = -gradientLimit
-        dbf[dbf > gradientLimit] = gradientLimit
-        dbf[dbf < -gradientLimit] = -gradientLimit
-        dbo[dbo > gradientLimit] = gradientLimit
-        dbo[dbo < -gradientLimit] = -gradientLimit
-        '''
+            
         #do SGD update
-        self.Wz = self.Wz - self.learningRate * deltas['Wz']
-        self.Wi = self.Wi - self.learningRate * deltas['Wi']
-        self.Wf = self.Wf - self.learningRate * deltas['Wf']
-        self.Wo = self.Wo - self.learningRate * deltas['Wo']
-        
-        self.Rz = self.Rz - self.learningRate * deltas['Rz']
-        self.Ri = self.Ri - self.learningRate * deltas['Ri']
-        self.Rf = self.Rf - self.learningRate * deltas['Rf']
-        self.Ro = self.Ro - self.learningRate * deltas['Ro']
-        
-        self.bz = self.bz - self.learningRate * deltas['bz']
-        self.bi = self.bi - self.learningRate * deltas['bi']
-        self.bf = self.bf - self.learningRate * deltas['bf']
-        self.bo = self.bo - self.learningRate * deltas['bo']
+        if self.useAdaGrad:
+            self.Wz = self.Wz - self.learningRate * deltas['Wz'] / np.sqrt(self.memory['dWz'] + 1e-8)
+            self.Wi = self.Wi - self.learningRate * deltas['Wi'] / np.sqrt(self.memory['dWi'] + 1e-8)
+            self.Wf = self.Wf - self.learningRate * deltas['Wf'] / np.sqrt(self.memory['dWf'] + 1e-8)
+            self.Wo = self.Wo - self.learningRate * deltas['Wo'] / np.sqrt(self.memory['dWo'] + 1e-8)
+            
+            self.Rz = self.Rz - self.learningRate * deltas['Rz'] / np.sqrt(self.memory['dRz'] + 1e-8)
+            self.Ri = self.Ri - self.learningRate * deltas['Ri'] / np.sqrt(self.memory['dRi'] + 1e-8)
+            self.Rf = self.Rf - self.learningRate * deltas['Rf'] / np.sqrt(self.memory['dRf'] + 1e-8)
+            self.Ro = self.Ro - self.learningRate * deltas['Ro'] / np.sqrt(self.memory['dRo'] + 1e-8)
+            
+            self.bz = self.bz - self.learningRate * deltas['bz'] / np.sqrt(self.memory['dbz'] + 1e-8)
+            self.bi = self.bi - self.learningRate * deltas['bi'] / np.sqrt(self.memory['dbi'] + 1e-8)
+            self.bf = self.bf - self.learningRate * deltas['bf'] / np.sqrt(self.memory['dbf'] + 1e-8)
+            self.bo = self.bo - self.learningRate * deltas['bo'] / np.sqrt(self.memory['dbo'] + 1e-8)
+        else:
+            self.Wz = self.Wz - self.learningRate * deltas['Wz'] 
+            self.Wi = self.Wi - self.learningRate * deltas['Wi'] 
+            self.Wf = self.Wf - self.learningRate * deltas['Wf'] 
+            self.Wo = self.Wo - self.learningRate * deltas['Wo']
+            
+            self.Rz = self.Rz - self.learningRate * deltas['Rz'] 
+            self.Ri = self.Ri - self.learningRate * deltas['Ri']
+            self.Rf = self.Rf - self.learningRate * deltas['Rf']
+            self.Ro = self.Ro - self.learningRate * deltas['Ro']
+            
+            self.bz = self.bz - self.learningRate * deltas['bz']
+            self.bi = self.bi - self.learningRate * deltas['bi']
+            self.bf = self.bf - self.learningRate * deltas['bf']
+            self.bo = self.bo - self.learningRate * deltas['bo']
     
 
     def stable_softmax(self, X):
         #table softmax
-        exps = np.exp(X - np.max(X))
-        return exps / np.sum(exps)
-    
-        #exps = np.exp(X)
+        #exps = np.exp(X - np.max(X))
         #return exps / np.sum(exps)
+    
+        exps = np.exp(X)
+        return exps / np.sum(exps)
 
 
-    def train(self, trainingSet = [], trainingTruth = [], batchSize = 10, learningRate = 0.5):
-        self.learningRate = learningRate
-        batchCount = int(math.ceil(float(len(trainingSet)) /batchSize))
+    def train(self, trainingSet = [], trainingTruth = []):
+        batchCount = int(math.ceil(float(len(trainingSet)) / self.batchSize))
         for b in range(batchCount):
-            X_batch = trainingSet[b*batchSize : (b+1)*batchSize]
-            Y_batch = trainingTruth[b*batchSize : (b+1)*batchSize]
+            X_batch = trainingSet[b*self.batchSize : (b+1)*self.batchSize]
+            Y_batch = trainingTruth[b*self.batchSize : (b+1)*self.batchSize]
             
             deltas = self.backProp(X_batch, Y_batch)
             self.SGD(deltas)
@@ -344,35 +357,20 @@ def clean_Data(myData):
         cleanedData.append(cleaned)        
     return cleanedData
 
-
 def preProcessing_charBased():
-    unknown_token = "UNKNOWN_TOKEN"
-    start_char = " "
-    end_char = " "
-    # Read the data and append SENTENCE_START and SENTENCE_END tokens
-    print "Reading CSV file..."
-    f = open('wikitext-2-raw/wiki.train.raw', 'r') 
-    sentences = clean_Data(f.readlines())
-    for i,line in enumerate(sentences):
-        
-        sentences[i] = start_char + sentences[i] + end_char
+    f = open('toyExample', 'r') 
+    data = f.readlines()
+    chars = '\n'.join(clean_Data(data))
+    uniqueChars = set(chars)
+    c2i = { ch:i for i,ch in enumerate(uniqueChars) }
+    i2c = { i:ch for i,ch in enumerate(uniqueChars) }
     
-    i2c = {}
-    c2i = {}
-    id = 0
-    for l in sentences:
-        for c in l:
-            if c not in c2i:
-                c2i[c] = id
-                i2c[id] = c
-                id += 1 
-     
-     
-    print "Using vocabulary size %d." % len(c2i)
+    print 'The number of chars = %d' % len(chars)
+    print "The number of unique chars = %d." % len(c2i)
      
     # Create the training data
-    X_train = np.asarray([[c2i[w] for w in sent[:-1]] for sent in sentences])
-    Y_train = np.asarray([[c2i[w] for w in sent[1:]] for sent in sentences])
+    X_train = np.asarray([[c2i[c] for c in chars[:-1]]])
+    Y_train = np.asarray([[c2i[c] for c in chars[1:]]])
     return X_train, Y_train, c2i, i2c
 
 def preProcessing(vocabSize):
@@ -382,14 +380,12 @@ def preProcessing(vocabSize):
     sentence_end_token = "SENTENCE_END"
     # Read the data and append SENTENCE_START and SENTENCE_END tokens
     print "Reading CSV file..."
-    with open('wikitext-2-raw/wiki.train.tokens', 'rb') as f:
-        reader = csv.reader(f, skipinitialspace=True)
-        reader.next()
-        # Split full comments into sentences
-        sentences = itertools.chain(*[nltk.sent_tokenize(x[0].decode('utf-8').lower()) for x in reader])
-        sentences = clean_Data(sentences)
-        # Append SENTENCE_START and SENTENCE_END
-        sentences = ["%s %s %s" % (sentence_start_token, x, sentence_end_token) for x in sentences]
+    f = open('toyExample', 'r')
+    # Split full comments into sentences
+    sentences = f.readlines()
+    sentences = clean_Data(sentences)
+    # Append SENTENCE_START and SENTENCE_END
+    sentences = ["%s %s %s" % (sentence_start_token, x, sentence_end_token) for x in sentences]
     print "Parsed %d sentences." % (len(sentences))
          
     # Tokenize the sentences into words
@@ -428,68 +424,82 @@ def generateText(lstm, w2i, i2w, startWordSeed, wordCount):
     if startWordSeed not in w2i:
         print 'Word is not in vocab, try different word!'
         return
-    sent = ''
+    sent = startWordSeed + ','
     genWord = startWordSeed
     ht_1 = np.zeros(lstm.hiddenDim)
     ct_1 = np.zeros(lstm.hiddenDim)
-    while wordCount >0:
+    while wordCount > 0:
         xt = np.zeros(lstm.inputDim)
         xt[w2i[genWord]] = 1.0
         softmaxPredictions, ht, ct = lstm.generate(xt, ht_1, ct_1)
+        #print sum(softmaxPredictions[0])
+        #genWordId = np.random.choice(range(lstm.inputDim), p=softmaxPredictions[0].ravel())
         genWordId = softmaxPredictions[0].argmax()
         genWord = i2w[genWordId]
-        sent += genWord + ' '
-        ht_1 = ht.T
-        ct_1 = ct.T
+        sent += genWord + ','
+        ht_1 = ht
+        ct_1 = ct
         wordCount -= 1
     return sent
     
     
 
 def main():
-    np.random.seed(100)
-    D = 38 # Number of input dimension == number of items in vocabulary
-    H = D # Number of LSTM layer's neurons
-    epochs = 30
-    valQuota = 0.2
+    np.random.seed(10)
     
+    #X_all, Y_all, w2i, i2w = preProcessing(10)
     X_all, Y_all, w2i, i2w = preProcessing_charBased()
-    X_all = X_all[:1000]
-    Y_all = Y_all[:1000]
+    
+    D = len(w2i) # Number of input dimension == number of items in vocabulary
+    H = D # Number of LSTM layer's neurons
+    epochs = 500000
+    valQuota = 0.0
+    
+    #X_all = X_all[:2]
+    #Y_all = Y_all[:2]
     valSize = int(valQuota * len(X_all))
     X_val = X_all[:valSize]
     Y_val = Y_all[:valSize]
     X_train = X_all[valSize:]
     Y_train = Y_all[valSize:]
-    lstm = zLSTM(D, H)
-    lr = 0.5
+    
+    
+    lstm = zLSTM(inputDim=D, hiddenDim=H, learningRate=0.01, clipGradients= False, useAdaGrad=False, batchSize = 1)
     
     print 'Starting training'
     
     crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
     print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
-        
-    crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
-    print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
-    for i in range(epochs):
-        print 'Epoch#',i
-        
-        #lstm.train(X_train, Y_train, batchSize=10, learningRate=lr/float(i+1))
-        lstm.train(X_train, Y_train, batchSize=10, learningRate=lr)
-        
-        crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
-        print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
-        
+    
+    if valSize:
         crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
         print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
+    for i in range(epochs):
+        #print 'Epoch#',i
         
+        #lstm.train(X_train, Y_train, batchSize=10, learningRate=lr/float(i+1))
+        lstm.train(X_train, Y_train)
+        
+        if i % 100 == 0:
+            print 'Epoch#',i
+            crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
+            print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
+            
+            if valSize:
+                crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
+                print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
+            
+            print 'Generated chars:\n', generateText(lstm, w2i, i2w, ' ', 50)
+            #pkl.dump([lstm,w2i,i2w], open('lstm.pkl', 'wb'))
+            #print 'Model is saved to lstm.pkl'
+            
         #shuffle the training set for every epoch
-        combined = list(zip(X_train, Y_train))
-        random.shuffle(combined)
-        X_train[:], Y_train[:] = zip(*combined)
+        #combined = list(zip(X_train, Y_train))
+        #random.shuffle(combined)
+        #X_train[:], Y_train[:] = zip(*combined)
         
     pkl.dump([lstm,w2i,i2w], open('lstm.pkl', 'wb'))
-    print 'Training is finished, model is saved to lstm.pkl'
+    print 'Model is saved to lstm.pkl'
     
     
 
@@ -498,7 +508,7 @@ def simulateData():
     lstm = lst[0]
     w2i = lst[1]
     i2w = lst[2]
-    sent = generateText(lstm, w2i, i2w, 'player', 50)
+    sent = generateText(lstm, w2i, i2w, ' ', 500)
     print sent
     
 
