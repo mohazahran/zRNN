@@ -508,6 +508,10 @@ def main():
     X_val, Y_val, v2i, i2v = preProcessing_charBased(filePath=valPath, v2i = v2i, i2v = i2v)
     X_test, Y_test, v2i, i2v = preProcessing_charBased(filePath=testPath, v2i = v2i, i2v = i2v)
     
+    X_train = X_train[:5000]
+    Y_train = Y_train[:5000]
+    X_val = X_val[:100]
+    Y_val = Y_val[:100]
     
     #X_all, Y_all, v2i, i2v = preProcessing_charBased('datasets/PTB/ptb.char.train.txt')
     

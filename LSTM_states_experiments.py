@@ -75,33 +75,45 @@ def clean_Data(myData):
     return cleanedData
 
 
-def preProcessing_charBased():
-    f = open('datasets/toyExample', 'r') 
-    #data = f.readlines()
-    #chars = '\n'.join(clean_Data(data))
-    #uniqueChars = set(chars)
-    chars = f.read()
-    uniqueChars = set(chars)
-    c2i = { ch:i for i,ch in enumerate(uniqueChars) }
-    i2c = { i:ch for i,ch in enumerate(uniqueChars) }
+def preProcessing_charBased(filePath='',  v2i = None, i2v = None):
+    f = open(filePath, 'r') 
+    startToken = '['
+    endToken = ']'
+    unknownToken = '< u n k >'
+    if v2i == None or i2v == None:
+        chars = f.read()
+        uniqueChars = set(chars.replace('\n', ' '))
+        uniqueChars.add(startToken); uniqueChars.add(endToken)
+        v2i = { ch:i for i,ch in enumerate(uniqueChars) }
+        i2v = { i:ch for i,ch in enumerate(uniqueChars) }
     
-    print 'The number of chars = %d' % len(chars)
-    print "The number of unique chars = %d." % len(c2i)
-     
-    # Create the training data
-    X_train = np.asarray([[c2i[c] for c in chars[:-1]]])
-    Y_train = np.asarray([[c2i[c] for c in chars[1:]]])
-    return X_train, Y_train, c2i, i2c
+        print 'The number of chars = %d' % len(chars)
+        print "The number of unique chars = %d." % len(v2i)
+    
+        sentences = chars.split('\n')
+    else:
+        sentences = f.read().split('\n')
+        
+    sentences = ["%s_%s_%s" % (startToken, x, endToken) for x in sentences]
+    #for i, sent in enumerate(sentences):
+    #    sentences[i] = [c if c in v2i else unknown_token for w in sent]
+    X,Y = [],[]
+    for sent in sentences:
+        X.append(np.asarray( [v2i[c] for c in sent[:-1]] ))
+        Y.append(np.asarray( [v2i[c] for c in sent[1:]]))
+        
+    
+    return X, Y, v2i, i2v
 
 
-def preProcessing(vocabSize):
+def preProcessing(filePath = '', vocabSize = 50, v2i = None, i2v = None):
     vocabulary_size = vocabSize
-    unknown_token = "UNKNOWN_TOKEN"
+    unknown_token = "UNK"
     sentence_start_token = "SENTENCE_START"
     sentence_end_token = "SENTENCE_END"
     # Read the data and append SENTENCE_START and SENTENCE_END tokens
-    print "Reading CSV file..."
-    f = open('toyExample', 'r')
+    print "Reading file..."
+    f = open(filePath, 'r')
     # Split full comments into sentences
     sentences = f.readlines()
     sentences = clean_Data(sentences)
@@ -110,36 +122,38 @@ def preProcessing(vocabSize):
     print "Parsed %d sentences." % (len(sentences))
          
     # Tokenize the sentences into words
-    tokenized_sentences = [nltk.word_tokenize(sent) for sent in sentences]
+    tokenized_sentences = [nltk.word_tokenize(sent.replace('unk','UNK')) for sent in sentences]
     
     
-     
-    # Count the word frequencies
-    word_freq = nltk.FreqDist(itertools.chain(*tokenized_sentences))
-    print "Found %d unique words tokens." % len(word_freq.items())
-     
-    # Get the most common words and build index_to_word and word_to_index vectors
-    vocab = word_freq.most_common(vocabulary_size-1)
-    index_to_word = [x[0] for x in vocab]
-    index_to_word.append(unknown_token)
-    word_to_index = dict([(w,i) for i,w in enumerate(index_to_word)])
-     
-    print "Using vocabulary size %d." % vocabulary_size
-    print "The least frequent word in our vocabulary is '%s' and appeared %d times." % (vocab[-1][0], vocab[-1][1])
+    if v2i == None or i2v == None:
+        # Count the word frequencies
+        word_freq = nltk.FreqDist(itertools.chain(*tokenized_sentences))
+        print "Found %d unique words tokens." % len(word_freq.items())
+         
+        # Get the most common words and build index_to_word and word_to_index vectors
+        vocab = word_freq.most_common(vocabulary_size-1)
+        index_to_word = [x[0] for x in vocab]
+        index_to_word.append(unknown_token)
+        word_to_index = dict([(w,i) for i,w in enumerate(index_to_word)])
+         
+        print "Using vocabulary size %d." % vocabulary_size
+        print "The least frequent word in our vocabulary is '%s' and appeared %d times." % (vocab[-1][0], vocab[-1][1])
+    else:
+        word_to_index = v2i; index_to_word = i2v
      
     # Replace all words not in our vocabulary with the unknown token
     for i, sent in enumerate(tokenized_sentences):
-        #tokenized_sentences[i] = [w if w in word_to_index else unknown_token for w in sent]
+        tokenized_sentences[i] = [w if w in word_to_index else unknown_token for w in sent]
         #dropout all unknown words
-        tokenized_sentences[i] = [w for w in sent if w in word_to_index]
+        #tokenized_sentences[i] = [w for w in sent if w in word_to_index]
      
-    print "\nExample sentence: '%s'" % sentences[0]
+    #print "\nExample sentence: '%s'" % sentences[0]
     print "\nExample sentence after Pre-processing: '%s'" % tokenized_sentences[0]
      
     # Create the training data
-    X_train = np.asarray([[word_to_index[w] for w in sent[:-1]] for sent in tokenized_sentences])
-    Y_train = np.asarray([[word_to_index[w] for w in sent[1:]] for sent in tokenized_sentences])
-    return X_train, Y_train, word_to_index, index_to_word
+    X = np.asarray([[word_to_index[w] for w in sent[:-1]] for sent in tokenized_sentences])
+    Y = np.asarray([[word_to_index[w] for w in sent[1:]] for sent in tokenized_sentences])
+    return X, Y, word_to_index, index_to_word
 
 
 def generateText(lstm, w2i, i2w, startWordSeed, wordCount):
@@ -467,16 +481,19 @@ class zLSTM(object):
       
       
     def SGD(self, deltas):
-        #clip gradients
         for d in deltas:
+            #batch normalization
+            deltas[d] /= float(self.batchSize)
+            
+            #gradient clipping
             if self.clipGradients:
                 np.clip(deltas[d], -5, 5, out=deltas[d]) # clip to overcome exploding gradients
+                
             if self.useAdaGrad:
                 self.gradientMemory[d] += deltas[d] * deltas[d] # updating memory
                 self.weights[d] -= self.learningRate * deltas[d] / np.sqrt(self.gradientMemory[d] + 1e-8)
             else:
                 self.weights[d] -= self.learningRate * deltas[d]
-      
                 
     def stable_softmax(self, X):
         #table softmax
@@ -502,25 +519,43 @@ class zLSTM(object):
 
 def main():
     np.random.seed(10)
+    '''
+    dir = 'datasets/PTB/'
+    trainPath = dir + 'ptb.train.txt'; valPath = dir + 'ptb.valid.txt'; testPath = dir + 'ptb.test.txt';
+    vocabSize = 500 
+    X_train, Y_train, v2i, i2v = preProcessing(filePath=trainPath, vocabSize=vocabSize ,  v2i = None, i2v = None)
+    X_val, Y_val, v2i, i2v = preProcessing(filePath=valPath, vocabSize=vocabSize ,  v2i = v2i, i2v = i2v)
+    X_test, Y_test, v2i, i2v = preProcessing(filePath=testPath, vocabSize=vocabSize ,  v2i = v2i, i2v = i2v)
+    '''
+    dir = 'datasets/PTB/'
+    trainPath = dir + 'ptb.char.train.txt'; valPath = dir + 'ptb.char.valid.txt'; testPath = dir + 'ptb.char.test.txt';
+    #trainPath = dir + 'ptb.char.sample.txt'; valPath = dir + 'ptb.char.sample.txt'; testPath = dir + 'ptb.char.sample.txt'; 
+    X_train, Y_train, v2i, i2v = preProcessing_charBased(filePath=trainPath, v2i = None, i2v = None)
+    X_val, Y_val, v2i, i2v = preProcessing_charBased(filePath=valPath, v2i = v2i, i2v = i2v)
+    X_test, Y_test, v2i, i2v = preProcessing_charBased(filePath=testPath, v2i = v2i, i2v = i2v)
     
-    #X_all, Y_all, w2i, i2w = preProcessing(10)
-    X_all, Y_all, w2i, i2w = preProcessing_charBased()
+    X_train = X_train[:5000]
+    Y_train = Y_train[:5000]
+    X_val = X_val[:100]
+    Y_val = Y_val[:100]
     
-    D = len(w2i) # Number of input dimension == number of items in vocabulary
-    H = 50 # Number of LSTM layer's neurons
+    #X_all, Y_all, v2i, i2v = preProcessing_charBased('datasets/PTB/ptb.char.train.txt')
+    
+    D = len(v2i) # Number of input dimension == number of items in vocabulary
+    H = 100 # Number of LSTM layer's neurons
     epochs = 5000
-    valQuota = 0.0
     
+    #valQuota = 0.0
     #X_all = X_all[:2]
     #Y_all = Y_all[:2]
-    valSize = int(valQuota * len(X_all))
-    X_val = X_all[:valSize]
-    Y_val = Y_all[:valSize]
-    X_train = X_all[valSize:]
-    Y_train = Y_all[valSize:]
+    #valSize = int(valQuota * len(X_all))
+    #X_val = X_all[:valSize]
+    #Y_val = Y_all[:valSize]
+    #X_train = X_all[valSize:]
+    #Y_train = Y_all[valSize:]
     
     
-    lstm = zLSTM(inputDim=D, hiddenDim=H, learningRate=0.1, clipGradients= True, useAdaGrad=True, batchSize = 1, BPTT_length = 1309)
+    lstm = zLSTM(inputDim=D, hiddenDim=H, learningRate=0.1, clipGradients= True, useAdaGrad=True, batchSize = 128, BPTT_length = 100)
     
     crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
     print 'Initial Cross Entropy Loss = ', crossEntropyLoss
@@ -533,18 +568,21 @@ def main():
         
         lstm.train(X_train, Y_train)
         
-        if i % 100 == 0:
-            print 'Epoch %d ##########################################################################################' % i
+        if i % 1 == 0:
+            print 'Epoch %d ##########################################################################################' % (i+1)
             crossEntropyLoss = lstm.calculate_loss_batch(X_train, Y_train)
             print 'Cross Entropy TRAIN Loss = ', crossEntropyLoss
             
-            if valSize:
-                crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
-                print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
             
-            print 'Generated chars:\n', generateText(lstm, w2i, i2w, 'I', 1300)
+            crossEntropyLoss = lstm.calculate_loss_batch(X_val, Y_val)
+            print 'Cross Entropy VAL Loss   = ', crossEntropyLoss
             
-            pkl.dump([lstm,w2i,i2w], open('lstm.pkl', 'wb'))
+            crossEntropyLoss = lstm.calculate_loss_batch(X_test, Y_test)
+            print 'Cross Entropy test Loss   = ', crossEntropyLoss
+            
+            print 'Generated data:\n', generateText(lstm, v2i, i2v, '[', 100)
+            
+            pkl.dump([lstm,v2i,i2v], open('lstm.pkl', 'wb'))
             print 'Model is saved to lstm.pkl'
             
         #shuffle the training set for every epoch
@@ -552,13 +590,13 @@ def main():
         random.shuffle(combined)
         X_train[:], Y_train[:] = zip(*combined)
         
-    pkl.dump([lstm,w2i,i2w], open('lstm.pkl', 'wb'))
+    pkl.dump([lstm,v2i,i2v], open('lstm.pkl', 'wb'))
     print 'Model is saved to lstm.pkl'
     
-    LOGFILE.close()
     
 
 
 if __name__ == '__main__':
-    simulateData()
-    #main()
+    main()
+    #simulateData()
+    
